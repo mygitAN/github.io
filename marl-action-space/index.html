@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blended Weights vs Discrete Choices</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a single reading column that tells the story in order,
+   with wide picture grids breaking out of it for side by side comparison. */
+:root {
+  --bg: #eef1f4;        /* cool paper */
+  --surface: #ffffff;   /* picture cards */
+  --ink: #16202e;       /* main text */
+  --muted: #5b6878;     /* captions */
+  --line: #d5dbe3;      /* borders */
+  --edge: #7f8b9a;      /* triangle outline inside the 3D pictures */
+  --did: #b4532a;       /* tag colour for continuous actions */
+  --asks: #1d4ed8;      /* tag colour for discrete actions */
+  --mom: #e08a1e;       /* Momentum sleeve */
+  --val: #17968a;       /* Value sleeve */
+  --qua: #7a5cd6;       /* Quality sleeve */
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10151c; --surface: #18202b; --ink: #e8edf3; --muted: #9aa7b6;
+    --line: #2a3442; --edge: #6c7a8c; --did: #e8956a; --asks: #7aa2ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10151c; --surface: #18202b; --ink: #e8edf3; --muted: #9aa7b6;
+  --line: #2a3442; --edge: #6c7a8c; --did: #e8956a; --asks: #7aa2ff;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.55;
+}
+main { max-width: 1120px; margin: 0 auto; padding: 40px 20px 72px; display: flex; flex-direction: column; gap: 44px; }
+section { display: flex; flex-direction: column; gap: 18px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.12; }
+h1 { font-size: clamp(2rem, 4.6vw, 3.1rem); font-weight: 700; max-width: 18ch; }
+h2 { font-size: clamp(1.45rem, 2.8vw, 1.9rem); font-weight: 700; }
+h3 { font-size: 1.08rem; font-weight: 500; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 1.12rem; }
+.note { color: var(--muted); font-size: 0.92rem; }
+.part { font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+/* Sleeve legend: three coloured dots that match the triangle corners. */
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.95rem; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+/* Segmented buttons that drive the animations. */
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.controls .label { font-size: 0.92rem; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button, .btn {
+  font: 500 0.92rem var(--body); color: var(--ink); background: transparent;
+  border: 0; padding: 9px 14px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.btn { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+button:focus-visible { outline: 2px solid var(--asks); outline-offset: 2px; }
+
+/* Picture grid: two columns on a wide screen, one on a phone. */
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; display: flex; flex-direction: column; gap: 10px;
+}
+.card.did { border-top: 3px solid var(--did); }
+.card.asks { border-top: 3px solid var(--asks); }
+.tag { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.did .tag { color: var(--did); }
+.asks .tag { color: var(--asks); }
+.card p { font-size: 0.94rem; color: var(--muted); }
+.readout { font-family: var(--mono); font-size: 0.82rem; font-variant-numeric: tabular-nums; color: var(--ink); min-height: 2.6em; }
+
+/* The 3D picture: a canvas with a layer of HTML labels on top of it. */
+.stage { position: relative; aspect-ratio: 4 / 3; width: 100%; overflow: hidden; border-radius: 8px; touch-action: pan-y; cursor: grab; }
+.stage:active { cursor: grabbing; }
+.stage canvas { display: block; width: 100%; height: 100%; }
+.stage .tip {
+  position: absolute; left: 0; top: 0; pointer-events: none; white-space: nowrap;
+  font: 500 0.74rem var(--mono); color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  padding: 1px 5px; border-radius: 4px;
+}
+.stage .tip.pick { border: 1px solid var(--ink); }
+.stage.nofx::after {
+  content: "This picture needs WebGL, which is not available in this browser.";
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+  padding: 20px; color: var(--muted); font-size: 0.92rem;
+}
+
+/* Comparison tables scroll on their own so the page never scrolls sideways. */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 0.94rem; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+thead th { font-family: var(--display); font-weight: 500; }
+tbody th { font-weight: 600; width: 22%; }
+footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <section>
+      <div class="part">Multi-agent reinforcement learning, action design</div>
+      <h1>From blended weights to discrete choices</h1>
+      <p class="lede">A portfolio agent that outputs blended weights can always hedge, so a single agent and a multi-agent (MARL) system end up giving the same kind of answer. Here each one picks from a fixed list instead, and equal weight, the single agent and MARL are then compared on equal terms. The pictures below show that change, and why the continuous TD3 algorithm makes way for a discrete one.</p>
+    </section>
+  </header>
+
+  <section>
+    <h2>How to read the pictures</h2>
+    <p>Every picture stands on the same triangle. Each corner is one sleeve held at 100%. Any point inside the triangle is a blend, and the centre is equal weight. Height shows a number the agent cares about: a probability in part 1, a value estimate in part 2. Drag any picture to turn it.</p>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--mom)"></i>Momentum</span>
+      <span><i class="dot" style="background:var(--val)"></i>Value</span>
+      <span><i class="dot" style="background:var(--qua)"></i>Quality</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="part">Part 1</div>
+    <h2>Blended weights compared with discrete choices</h2>
+    <p>On the left, both agents may land anywhere on the triangle. On the right, each agent may only stand on a pillar. The single agent chooses which sleeve to hold. MARL chooses how to blend them.</p>
+    <div class="controls">
+      <span class="label">Selection rule for the right-hand pictures</span>
+      <div class="seg" role="group" aria-label="Selection rule">
+        <button id="mode-det" type="button" aria-pressed="true">Always take the top option</button>
+        <button id="mode-sam" type="button" aria-pressed="false">Sample from the SoftMax</button>
+      </div>
+      <button id="play" class="btn" type="button">Pause</button>
+    </div>
+
+    <div class="grid">
+      <article class="card did">
+        <div class="tag">Blended weights</div>
+        <h3>Single agent, blended weights</h3>
+        <div class="stage" id="st-did-single"><canvas></canvas></div>
+        <div class="readout" id="ro-did-single"></div>
+        <p>The whole triangle is allowed. The dot drifts around the middle because a blend is always a safe answer.</p>
+      </article>
+      <article class="card asks">
+        <div class="tag">Discrete choices</div>
+        <h3>Single agent, three options</h3>
+        <div class="stage" id="st-ask-single"><canvas></canvas></div>
+        <div class="readout" id="ro-ask-single"></div>
+        <p>One pillar per sleeve. Pillar height is the SoftMax probability. The agent must commit to one sleeve.</p>
+      </article>
+      <article class="card did">
+        <div class="tag">Blended weights</div>
+        <h3>MARL, blended weights</h3>
+        <div class="stage" id="st-did-marl"><canvas></canvas></div>
+        <div class="readout" id="ro-did-marl"></div>
+        <p>Same triangle and the same kind of answer. It sees more inputs, but the action looks no different from the single agent, so the two systems are hard to tell apart.</p>
+      </article>
+      <article class="card asks">
+        <div class="tag">Discrete choices</div>
+        <h3>MARL, a fixed menu of splits</h3>
+        <div class="stage" id="st-ask-marl"><canvas></canvas></div>
+        <div class="readout" id="ro-ask-marl"></div>
+        <p>An example menu: the three single sleeves, equal weight, three 50/25/25 tilts, and a Hold option that keeps the current split. The menu contains every single-agent choice and equal weight, so MARL can in principle do at least as well as both.</p>
+      </article>
+    </div>
+
+    <p>Switch the selection rule and watch the counters. When the agent always takes the top option, the choice changes only when the ranking changes. When it samples from the SoftMax, the choice can jump while the scores barely move, so the switch count climbs. That extra trading has to be measured under the same costs and data.</p>
+    <p class="note">The scores that drive this animation are made up for illustration. They are not real results.</p>
+  </section>
+
+  <section>
+    <div class="part">Part 2</div>
+    <h2>Continuous TD3 compared with a discrete algorithm</h2>
+    <p>Both pictures read the same value estimate. TD3 treats it as a smooth surface and feels for the slope. A discrete algorithm reads it at the menu points only and compares the heights.</p>
+    <div class="controls">
+      <span class="label">Value estimate</span>
+      <div class="seg" role="group" aria-label="Value estimate">
+        <button id="q-clear" type="button" aria-pressed="true">Clear hill</button>
+        <button id="q-flat" type="button" aria-pressed="false">Nearly flat and noisy</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <article class="card did">
+        <div class="tag">Continuous, TD3</div>
+        <h3>One point, moved by the slope</h3>
+        <div class="stage" id="st-td3"><canvas></canvas></div>
+        <div class="readout" id="ro-td3"></div>
+        <p>The critic gives a value for every possible blend. The actor holds one point and moves it uphill using only the slope under its feet. The wire mesh is the second critic. TD3 trusts the lower of the two when it builds its learning target.</p>
+      </article>
+      <article class="card asks">
+        <div class="tag">Discrete, DQN style</div>
+        <h3>Score every option, take the tallest</h3>
+        <div class="stage" id="st-dqn"><canvas></canvas></div>
+        <div class="readout" id="ro-dqn"></div>
+        <p>The network gives one value per menu option. There is no actor and no slope. It compares the pillars and takes the tallest, or passes them through a SoftMax and samples.</p>
+      </article>
+    </div>
+
+    <p>Now choose the nearly flat estimate, which is the likely situation with a few hundred monthly transitions. The TD3 actor has almost no slope to follow, so it slides to an edge and sticks there. That is the saturation problem. The discrete agent still ranks its options, but when the pillars are almost the same height the ranking flips with noise.</p>
+    <p>So discrete actions remove the hedging and the reliance on slope. They do not make a noisy value estimate accurate, which is why a careful statistical comparison matters more than the algorithm swap.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th></th><th>TD3 (continuous)</th><th>DQN or categorical actor-critic (discrete)</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>What the agent outputs</th><td>A vector of weights, any blend</td><td>The number of one option on a fixed list</td></tr>
+          <tr><th>How it picks</th><td>An actor network nudges its answer uphill on the critic</td><td>It scores every option and compares them</td></tr>
+          <tr><th>How it explores</th><td>Adds random noise to the weights</td><td>Tries a random option now and then, or samples from the SoftMax</td></tr>
+          <tr><th>Networks</th><td>One actor and two critics, each with a slow target copy</td><td>DQN: one value network and a target copy. Actor-critic: a SoftMax actor and a critic</td></tr>
+          <tr><th>Guard against overrating value</th><td>Takes the lower of two critics</td><td>Double DQN</td></tr>
+          <tr><th>Can it hedge?</th><td>Yes, a blend is always available</td><td>Only when a blend is on the menu</td></tr>
+          <tr><th>Top option or sampling</th><td>Top option only, by design</td><td>Both, so the two selection rules can be compared</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="part">Part 3</div>
+    <h2>The comparison</h2>
+    <p>Three systems, the same data, the same costs and the same five seeds. Test whether the differences are statistically significant. A null result is still a result.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>System</th><th>What it chooses</th><th>Always top option</th><th>Sampled from SoftMax</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>Equal weight</th><td>Nothing, it is the baseline</td><td colspan="2">One run, no selection rule</td></tr>
+          <tr><th>Single agent</th><td>One of three sleeves</td><td>Run</td><td>Run, report turnover and fees</td></tr>
+          <tr><th>MARL</th><td>One split from the menu</td><td>Run</td><td>Run, report turnover and fees</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>All animated values are illustrative.</footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* =====================================================================
+   SHARED GEOMETRY
+   The three sleeves sit at the corners of a flat triangle on the floor.
+   A portfolio is a list of three weights [Momentum, Value, Quality]
+   that sum to one, and it maps to exactly one point on that triangle.
+   ===================================================================== */
+
+// Corner positions on the floor (x, z). Momentum at the back, Value front
+// left, Quality front right.
+const CORNERS = [
+  { name: "Momentum", x: 0.0,    z: -1.0, hex: 0xe08a1e },
+  { name: "Value",    x: -0.866, z: 0.5,  hex: 0x17968a },
+  { name: "Quality",  x: 0.866,  z: 0.5,  hex: 0x7a5cd6 }
+];
+
+// Fixed menu of splits for the discrete MARL agent, as [M, V, Q].
+// The first three entries are also the full action list of the single agent.
+const MENU = [
+  [1, 0, 0], [0, 1, 0], [0, 0, 1],
+  [1 / 3, 1 / 3, 1 / 3],
+  [0.5, 0.25, 0.25], [0.25, 0.5, 0.25], [0.25, 0.25, 0.5]
+];
+const HOLD = MENU.length;                 // index of the extra Hold option
+const HOLD_POS = { x: 1.2, z: -0.62 };    // Hold pillar stands beside the triangle
+
+// Turn three weights into a 3D point at height y above the triangle.
+function toPoint(w, y) {
+  return new THREE.Vector3(
+    w[0] * CORNERS[0].x + w[1] * CORNERS[1].x + w[2] * CORNERS[2].x,
+    y || 0,
+    w[0] * CORNERS[0].z + w[1] * CORNERS[1].z + w[2] * CORNERS[2].z
+  );
+}
+
+// Colour of a blend: mix the three sleeve colours by their weights.
+function mixColor(w) {
+  const c = new THREE.Color(0, 0, 0);
+  CORNERS.forEach(function (k, i) {
+    const s = new THREE.Color(k.hex);
+    c.r += w[i] * s.r; c.g += w[i] * s.g; c.b += w[i] * s.b;
+  });
+  return c;
+}
+
+// Short text for a set of weights, for example "M 50 / V 25 / Q 25".
+function fmt(w) {
+  const p = w.map(function (x) { return Math.round(x * 100); });
+  for (let i = 0; i < 3; i++) if (p[i] === 100) return CORNERS[i].name + " 100";
+  return "M " + p[0] + " / V " + p[1] + " / Q " + p[2];
+}
+
+/* ---------- small maths helpers ---------- */
+
+// SoftMax: turns scores into probabilities that sum to one and favours the best.
+function softmax(scores) {
+  const m = Math.max.apply(null, scores);
+  const e = scores.map(function (s) { return Math.exp(s - m); });
+  const t = e.reduce(function (a, b) { return a + b; }, 0);
+  return e.map(function (x) { return x / t; });
+}
+function argmax(a) { let k = 0; for (let i = 1; i < a.length; i++) if (a[i] > a[k]) k = i; return k; }
+// Draw one index at random, with chances given by the probabilities p.
+function sample(p) { let r = Math.random(); for (let i = 0; i < p.length; i++) { r -= p[i]; if (r <= 0) return i; } return p.length - 1; }
+// Standard normal random number (Box-Muller).
+function randn() { return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random()); }
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+/* =====================================================================
+   STAGE: one 3D picture
+   Each stage owns a canvas, a camera and a list of HTML labels that are
+   pinned to 3D points. Stages that share an orbit object turn together,
+   which keeps side by side pictures comparable.
+   ===================================================================== */
+
+const stages = [];
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function makeOrbit() {
+  // theta = turn around the vertical axis, phi = height of the camera.
+  return { theta: 0.55, phi: 0.52, idle: 0 };
+}
+
+function makeStage(id, orbit) {
+  const wrap = document.getElementById(id);
+  const canvas = wrap.querySelector("canvas");
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+  } catch (err) {
+    wrap.classList.add("nofx");   // show a plain message instead of a blank box
+    return null;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 4 / 3, 0.1, 50);
+
+  // Soft overall light plus one directional light so pillars and the
+  // value surface show their shape.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.78));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+
+  const stage = {
+    wrap: wrap, scene: scene, camera: camera, renderer: renderer, orbit: orbit,
+    labels: [],        // { el, pos } pairs, re-projected every frame
+    edgeMats: [],      // materials that follow the --edge theme colour
+    visible: true,     // set by the IntersectionObserver below
+    update: null       // per-frame callback set by each picture
+  };
+
+  // Keep the drawing buffer the same size as the box on the page.
+  new ResizeObserver(function () {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }).observe(wrap);
+
+  // Drag to turn. Horizontal drag spins, vertical drag tilts.
+  let drag = null;
+  wrap.addEventListener("pointerdown", function (e) { drag = { x: e.clientX, y: e.clientY }; wrap.setPointerCapture(e.pointerId); });
+  wrap.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    orbit.theta -= (e.clientX - drag.x) * 0.008;
+    orbit.phi = Math.min(1.35, Math.max(0.12, orbit.phi + (e.clientY - drag.y) * 0.006));
+    orbit.idle = 4;               // pause the slow auto turn for four seconds
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  wrap.addEventListener("pointerup", function () { drag = null; });
+  wrap.addEventListener("pointercancel", function () { drag = null; });
+
+  // Do not spend time drawing pictures that are scrolled out of view.
+  new IntersectionObserver(function (entries) { stage.visible = entries[0].isIntersecting; }).observe(wrap);
+
+  stages.push(stage);
+  return stage;
+}
+
+// Add an HTML label pinned to a 3D position. Returns the record so the
+// caller can move it or change its text later.
+function addLabel(stage, text, pos, cls) {
+  const el = document.createElement("div");
+  el.className = "tip" + (cls ? " " + cls : "");
+  el.textContent = text;
+  stage.wrap.appendChild(el);
+  const rec = { el: el, pos: pos.clone() };
+  stage.labels.push(rec);
+  return rec;
+}
+
+// Draw the triangle floor: a colour wash that shows the blend at each
+// point, an outline, guide lines at 25% steps and the corner names.
+function addFloor(stage, washOpacity) {
+  const P = CORNERS.map(function (c) { return new THREE.Vector3(c.x, 0, c.z); });
+
+  // Colour wash. Each corner carries its sleeve colour and the GPU blends
+  // them across the face, so the colour at a point is the colour of its mix.
+  const geo = new THREE.BufferGeometry();
+  const pos = [], col = [];
+  P.forEach(function (p, i) {
+    pos.push(p.x, 0, p.z);
+    const c = new THREE.Color(CORNERS[i].hex);
+    col.push(c.r, c.g, c.b);
+  });
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  stage.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: washOpacity,
+    side: THREE.DoubleSide, depthWrite: false
+  })));
+
+  // Outline of the triangle.
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x888888 });
+  stage.edgeMats.push(edgeMat);
+  stage.scene.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(P), edgeMat));
+
+  // Guide lines where one sleeve is fixed at 25%, 50% or 75%.
+  const gridMat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 });
+  stage.edgeMats.push(gridMat);
+  const pts = [];
+  [0.25, 0.5, 0.75].forEach(function (c) {
+    for (let i = 0; i < 3; i++) {
+      const a = [0, 0, 0], b = [0, 0, 0];
+      a[i] = c; a[(i + 1) % 3] = 1 - c;
+      b[i] = c; b[(i + 2) % 3] = 1 - c;
+      pts.push(toPoint(a, 0.001), toPoint(b, 0.001));
+    }
+  });
+  stage.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), gridMat));
+
+  // Corner names, pushed slightly outside the triangle.
+  CORNERS.forEach(function (c) {
+    addLabel(stage, c.name, new THREE.Vector3(c.x * 1.2, 0, c.z * 1.2));
+  });
+}
+
+// Build one pillar. The geometry is shifted up so that scaling its height
+// keeps the base on the floor.
+function makePillar(stage, x, z, color) {
+  const geo = new THREE.CylinderGeometry(0.065, 0.065, 1, 24);
+  geo.translate(0, 0.5, 0);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: color, transparent: true, opacity: 0.35 }));
+  mesh.position.set(x, 0, z);
+  mesh.scale.y = 0.02;
+  stage.scene.add(mesh);
+  return mesh;
+}
+
+// Smoothly move a pillar towards a target height and light it if chosen.
+function driveP(pillar, height, chosen, k) {
+  pillar.scale.y += (Math.max(0.02, height) - pillar.scale.y) * k;
+  pillar.material.opacity += ((chosen ? 1 : 0.32) - pillar.material.opacity) * k;
+}
+
+/* =====================================================================
+   PART 1: blended weights against discrete choices
+   One made-up score per sleeve drifts over time, like changing market
+   regimes. All four pictures read the same scores, so the only thing
+   that differs between them is the shape of the action.
+   ===================================================================== */
+
+const sim = {
+  t: 0,                         // month counter
+  mode: "det",                  // "det" = take the top option, "sam" = sample
+  playing: !reduceMotion,       // respect the reduced motion setting
+  scores: [0, 0, 0],            // current sleeve scores
+  didSingle: [1 / 3, 1 / 3, 1 / 3],   // blended answer of the single agent
+  didMarl: [1 / 3, 1 / 3, 1 / 3],     // blended answer of the MARL system
+  singleP: [1 / 3, 1 / 3, 1 / 3], singlePick: 0, singleHist: [],
+  marlP: new Array(HOLD + 1).fill(1 / (HOLD + 1)), marlPick: 3, marlHeld: 3, marlHist: []
+};
+
+// Advance the illustration by one month.
+function stepMonth() {
+  sim.t += 1;
+
+  // Slow waves with different periods plus a little noise.
+  const period = [19, 27, 34], phase = [0, 2.1, 4.2];
+  sim.scores = period.map(function (p, i) {
+    return 1.1 * Math.sin(2 * Math.PI * sim.t / p + phase[i]) + 0.35 * randn();
+  });
+  const s = sim.scores;
+
+  // Blended agents: a soft blend of the scores. The high temperature
+  // keeps the answer near the centre, which is the hedging behaviour.
+  sim.didSingle = softmax(s.map(function (x) { return x / 2.5; }));
+  sim.didMarl = softmax(s.map(function (x) { return (x + 0.25 * randn()) / 2.5; }));
+
+  // Discrete single agent: three options, one must be chosen.
+  sim.singleP = softmax(s.map(function (x) { return 1.6 * x; }));
+  const sp = sim.mode === "det" ? argmax(sim.singleP) : sample(sim.singleP);
+  sim.singleHist.push(sp !== sim.singlePick ? 1 : 0);
+  sim.singlePick = sp;
+
+  // Discrete MARL: score every split on the menu. Hold scores the
+  // split already held plus a small bonus, so staying put can win.
+  const sc = MENU.map(function (w) { return 1.6 * dot(w, s); });
+  sc.push(sc[sim.marlHeld] + 0.25);
+  sim.marlP = softmax(sc);
+  const mp = sim.mode === "det" ? argmax(sim.marlP) : sample(sim.marlP);
+  const moved = mp !== HOLD && mp !== sim.marlHeld;
+  sim.marlHist.push(moved ? 1 : 0);
+  if (moved) sim.marlHeld = mp;
+  sim.marlPick = mp;
+
+  // Keep a rolling window of 24 months for the switch counters.
+  if (sim.singleHist.length > 24) sim.singleHist.shift();
+  if (sim.marlHist.length > 24) sim.marlHist.shift();
+
+  writePart1();
+}
+
+// Write the small text readouts under the four pictures.
+function writePart1() {
+  const sum = function (a) { return a.reduce(function (x, y) { return x + y; }, 0); };
+  const pct = function (w) { return "Momentum " + Math.round(w[0] * 100) + "%, Value " + Math.round(w[1] * 100) + "%, Quality " + Math.round(w[2] * 100) + "%"; };
+  document.getElementById("ro-did-single").textContent = "Weights now: " + pct(sim.didSingle);
+  document.getElementById("ro-did-marl").textContent = "Weights now: " + pct(sim.didMarl);
+  document.getElementById("ro-ask-single").textContent =
+    "Chosen: " + fmt(MENU[sim.singlePick]) + " (p = " + sim.singleP[sim.singlePick].toFixed(2) + "). Switches in last 24 months: " + sum(sim.singleHist);
+  document.getElementById("ro-ask-marl").textContent =
+    "Chosen: " + (sim.marlPick === HOLD ? "Hold at " + fmt(MENU[sim.marlHeld]) : fmt(MENU[sim.marlPick])) +
+    " (p = " + sim.marlP[sim.marlPick].toFixed(2) + "). Switches in last 24 months: " + sum(sim.marlHist);
+}
+
+// Picture for a blended agent: a dot that may go anywhere, with a trail.
+function buildBlended(id, orbit, getTarget) {
+  const st = makeStage(id, orbit);
+  if (!st) return;
+  addFloor(st, 0.42);            // bright wash: the whole triangle is allowed
+
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.07, 24, 16), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+  st.scene.add(ball);
+
+  // Trail of the last 18 months so the wandering is visible.
+  const TRAIL = 18;
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(TRAIL * 3), 3));
+  const trailMat = new THREE.LineBasicMaterial({ color: 0x888888 });
+  st.edgeMats.push(trailMat);
+  st.scene.add(new THREE.Line(trailGeo, trailMat));
+  const trail = [];
+  let lastT = -1;
+  const w = [1 / 3, 1 / 3, 1 / 3];   // position shown on screen, eased towards the target
+
+  st.update = function () {
+    const target = getTarget();
+    for (let i = 0; i < 3; i++) w[i] += (target[i] - w[i]) * 0.08;
+    ball.position.copy(toPoint(w, 0.07));
+    ball.material.color.copy(mixColor(w));
+
+    // Record one trail point per simulated month.
+    if (sim.t !== lastT) {
+      lastT = sim.t;
+      trail.push(toPoint(target, 0.02));
+      if (trail.length > TRAIL) trail.shift();
+      const arr = trailGeo.attributes.position.array;
+      trail.forEach(function (p, i) { arr[i * 3] = p.x; arr[i * 3 + 1] = p.y; arr[i * 3 + 2] = p.z; });
+      trailGeo.attributes.position.needsUpdate = true;
+      trailGeo.setDrawRange(0, trail.length);
+    }
+  };
+}
+
+// Picture for a discrete agent: one pillar per option, height = probability.
+function buildDiscrete(id, orbit, count, withHold, getState) {
+  const st = makeStage(id, orbit);
+  if (!st) return;
+  addFloor(st, 0.12);            // faint wash: only the pillars are allowed
+
+  const pillars = [];
+  for (let k = 0; k < count; k++) {
+    const p = toPoint(MENU[k], 0);
+    pillars.push(makePillar(st, p.x, p.z, mixColor(MENU[k])));
+  }
+  if (withHold) {
+    pillars.push(makePillar(st, HOLD_POS.x, HOLD_POS.z, new THREE.Color(0x8a94a3)));
+    addLabel(st, "Hold", new THREE.Vector3(HOLD_POS.x * 1.12, 0, HOLD_POS.z * 1.25));
+  }
+  const pick = addLabel(st, "", new THREE.Vector3(), "pick");   // floats above the chosen pillar
+
+  st.update = function () {
+    const s = getState();
+    pillars.forEach(function (pl, k) { driveP(pl, s.p[k] * 1.5, k === s.pick, 0.12); });
+    const top = pillars[s.pick];
+    pick.pos.set(top.position.x, top.scale.y + 0.14, top.position.z);
+    pick.el.textContent = s.pick === HOLD && withHold ? "Hold" : fmt(MENU[s.pick]);
+  };
+}
+
+/* =====================================================================
+   PART 2: TD3 against a discrete algorithm
+   Both pictures read one value function Q(weights). It blends between a
+   clear hill and a nearly flat, noisy surface depending on the toggle.
+   ===================================================================== */
+
+const val = { blend: 0, target: 0, jitter: MENU.map(function () { return 0; }), clock: 0 };
+
+// A clear hill with its top at a 50/20/30 blend.
+function qClear(w) {
+  const d = (w[0] - 0.5) * (w[0] - 0.5) + (w[1] - 0.2) * (w[1] - 0.2) + (w[2] - 0.3) * (w[2] - 0.3);
+  return 0.15 + 0.85 * Math.exp(-d / 0.16);
+}
+// A nearly flat surface: a slight tilt towards Quality buried in ripples.
+function qFlat(w) {
+  return 0.42 + 0.10 * w[2] + 0.03 * Math.sin(9 * w[0] + 2) * Math.cos(7 * w[1]);
+}
+// First critic: the estimate the actor climbs.
+function Q1(w) { return (1 - val.blend) * qClear(w) + val.blend * qFlat(w); }
+// Second critic: the same shape with its own small errors.
+function Q2(w) { return Q1(w) + 0.04 * Math.sin(11 * w[1] + 1) * Math.cos(8 * w[2] + 0.5) - 0.01; }
+
+const QH = 1.15;   // vertical stretch so the hill is easy to see
+
+// Build a triangle mesh that can be bent into a surface. Returns the mesh
+// geometry and the list of weights at each vertex.
+function makeSurfaceGeo(n) {
+  const ws = [], index = [], id = {};
+  for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+    id[i + "_" + j] = ws.length;
+    ws.push([i / n, j / n, 1 - (i + j) / n]);
+  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < n - i; j++) {
+    index.push(id[i + "_" + j], id[(i + 1) + "_" + j], id[i + "_" + (j + 1)]);
+    if (i + j < n - 1) index.push(id[(i + 1) + "_" + j], id[(i + 1) + "_" + (j + 1)], id[i + "_" + (j + 1)]);
+  }
+  const geo = new THREE.BufferGeometry();
+  const col = [];
+  ws.forEach(function (w) { const c = mixColor(w); col.push(c.r, c.g, c.b); });
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(ws.length * 3), 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(index);
+  return { geo: geo, ws: ws };
+}
+
+// Bend a surface so each vertex sits at the height given by fn(weights).
+function bend(surf, fn) {
+  const arr = surf.geo.attributes.position.array;
+  surf.ws.forEach(function (w, k) {
+    const p = toPoint(w, fn(w) * QH);
+    arr[k * 3] = p.x; arr[k * 3 + 1] = p.y; arr[k * 3 + 2] = p.z;
+  });
+  surf.geo.attributes.position.needsUpdate = true;
+  surf.geo.computeVertexNormals();
+}
+
+function buildTD3(orbit) {
+  const st = makeStage("st-td3", orbit);
+  if (!st) return;
+  addFloor(st, 0.10);
+
+  // Solid surface = first critic. Wire mesh = second critic.
+  const s1 = makeSurfaceGeo(26), s2 = makeSurfaceGeo(13);
+  st.scene.add(new THREE.Mesh(s1.geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })));
+  const wireMat = new THREE.MeshBasicMaterial({ color: 0x888888, wireframe: true, transparent: true, opacity: 0.45 });
+  st.edgeMats.push(wireMat);
+  st.scene.add(new THREE.Mesh(s2.geo, wireMat));
+
+  // The actor: a single point, a line down to the floor to show its blend,
+  // and an arrow that shows the slope it is following.
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.065, 24, 16), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x333333 }));
+  st.scene.add(ball);
+  const dropGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const dropMat = new THREE.LineBasicMaterial({ color: 0x888888 });
+  st.edgeMats.push(dropMat);
+  st.scene.add(new THREE.Line(dropGeo, dropMat));
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.3, 0xd0342c, 0.11, 0.07);
+  st.scene.add(arrow);
+  const tag = addLabel(st, "actor", new THREE.Vector3(), "pick");
+
+  // Actor state in two free numbers: a = Momentum weight, b = Value weight.
+  // Quality is whatever is left, so the weights always sum to one.
+  let a = 0.1, b = 0.7, age = 0;
+  const ro = document.getElementById("ro-td3");
+
+  st.update = function (dt) {
+    bend(s1, Q1); bend(s2, Q2);
+
+    // Measure the slope of the first critic at the actor's own point only.
+    const e = 0.004;
+    const q0 = Q1([a, b, 1 - a - b]);
+    const ga = (Q1([a + e, b, 1 - a - b - e]) - q0) / e;
+    const gb = (Q1([a, b + e, 1 - a - b - e]) - q0) / e;
+    const slope = Math.sqrt(ga * ga + gb * gb);
+
+    // Step uphill. A flat surface needs a bigger step size to move at all.
+    if (!reduceMotion) {
+      const lr = (0.22 + 2.2 * val.blend) * dt;
+      a += lr * ga; b += lr * gb;
+    }
+    // Keep the point inside the triangle. Hitting an edge and staying
+    // there is exactly what saturation looks like.
+    a = Math.max(0, Math.min(1, a)); b = Math.max(0, Math.min(1 - a, b));
+
+    const w = [a, b, 1 - a - b];
+    const top = toPoint(w, Q1(w) * QH + 0.07);
+    ball.position.copy(top);
+    ball.material.color.copy(mixColor(w));
+    dropGeo.setFromPoints([top, toPoint(w, 0)]);
+    tag.pos.set(top.x, top.y + 0.14, top.z);
+
+    // Point the arrow along the uphill direction on the surface.
+    const ahead = [a + 0.05 * ga / (slope || 1), b + 0.05 * gb / (slope || 1)];
+    const wAhead = [ahead[0], ahead[1], 1 - ahead[0] - ahead[1]];
+    const dir = toPoint(wAhead, Q1(wAhead) * QH + 0.07).sub(top);
+    arrow.visible = slope > 0.02 && dir.length() > 1e-4;
+    if (arrow.visible) {
+      arrow.position.copy(top);
+      arrow.setDirection(dir.normalize());
+      arrow.setLength(Math.min(0.45, 0.16 + slope * 0.12), 0.11, 0.07);
+    }
+
+    ro.textContent = "Actor at " + fmt(w) + ". Slope under it: " + slope.toFixed(2) +
+      (slope < 0.25 && val.blend > 0.5 ? " (almost nothing to follow)" : "");
+
+    // Start again from a new random blend every ten seconds so the climb repeats.
+    age += dt;
+    if (age > 10 && !reduceMotion) {
+      age = 0;
+      a = 0.05 + Math.random() * 0.6; b = 0.05 + Math.random() * (0.9 - a);
+    }
+  };
+}
+
+function buildDQN(orbit) {
+  const st = makeStage("st-dqn", orbit);
+  if (!st) return;
+  addFloor(st, 0.12);
+
+  // One pillar per menu option. Its height is the value read at that point.
+  const pillars = MENU.map(function (w) { const p = toPoint(w, 0); return makePillar(st, p.x, p.z, mixColor(w)); });
+  const tag = addLabel(st, "", new THREE.Vector3(), "pick");
+  const ro = document.getElementById("ro-dqn");
+
+  st.update = function () {
+    const q = MENU.map(function (w, k) { return Q1(w) + val.jitter[k]; });
+    const best = argmax(q);
+    pillars.forEach(function (pl, k) { driveP(pl, q[k] * QH, k === best, 0.15); });
+    const top = pillars[best];
+    tag.pos.set(top.position.x, top.scale.y + 0.14, top.position.z);
+    tag.el.textContent = "tallest";
+
+    // Gap between the best and second best option, to show how safe the ranking is.
+    const sorted = q.slice().sort(function (x, y) { return y - x; });
+    ro.textContent = "Top option: " + fmt(MENU[best]) + ". Lead over second best: " + (sorted[0] - sorted[1]).toFixed(2);
+  };
+}
+
+/* =====================================================================
+   WIRING: build everything, connect the buttons, run the frame loop
+   ===================================================================== */
+
+// Colour the triangle outlines and wire meshes from the page theme.
+function applyTheme() {
+  const edge = new THREE.Color(cssVar("--edge") || "#7f8b9a");
+  stages.forEach(function (st) { st.edgeMats.forEach(function (m) { m.color.copy(edge); }); });
+}
+
+function start() {
+  if (!window.THREE) {
+    // The 3D library did not load. Say so in every picture box.
+    document.querySelectorAll(".stage").forEach(function (el) { el.classList.add("nofx"); });
+    return;
+  }
+
+  // The four pictures of part 1 turn together, and so do the two of part 2.
+  const orbit1 = makeOrbit(), orbit2 = makeOrbit();
+  buildBlended("st-did-single", orbit1, function () { return sim.didSingle; });
+  buildDiscrete("st-ask-single", orbit1, 3, false, function () { return { p: sim.singleP, pick: sim.singlePick }; });
+  buildBlended("st-did-marl", orbit1, function () { return sim.didMarl; });
+  buildDiscrete("st-ask-marl", orbit1, MENU.length, true, function () { return { p: sim.marlP, pick: sim.marlPick }; });
+  buildTD3(orbit2);
+  buildDQN(orbit2);
+
+  // Run a few months up front so the first frame already shows a real state.
+  for (let i = 0; i < 30; i++) stepMonth();
+
+  applyTheme();
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+
+  /* ---------- buttons ---------- */
+  function pair(onId, offId, fn) {
+    const on = document.getElementById(onId), off = document.getElementById(offId);
+    on.addEventListener("click", function () { on.setAttribute("aria-pressed", "true"); off.setAttribute("aria-pressed", "false"); fn(); });
+  }
+  // Changing the selection rule clears the switch counters so the two rules compare fairly.
+  function setMode(m) { sim.mode = m; sim.singleHist = []; sim.marlHist = []; writePart1(); }
+  pair("mode-det", "mode-sam", function () { setMode("det"); });
+  pair("mode-sam", "mode-det", function () { setMode("sam"); });
+  pair("q-clear", "q-flat", function () { val.target = 0; });
+  pair("q-flat", "q-clear", function () { val.target = 1; });
+
+  const play = document.getElementById("play");
+  play.textContent = sim.playing ? "Pause" : "Play";
+  play.addEventListener("click", function () { sim.playing = !sim.playing; play.textContent = sim.playing ? "Pause" : "Play"; });
+
+  /* ---------- frame loop ---------- */
+  const tmp = new THREE.Vector3();
+  let last = performance.now(), monthClock = 0;
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+
+    // Part 1 clock: one simulated month every 0.9 seconds.
+    if (sim.playing) {
+      monthClock += dt;
+      if (monthClock > 0.9) { monthClock = 0; stepMonth(); }
+    }
+
+    // Part 2: ease between the clear hill and the flat surface, and redraw
+    // the small estimation errors on the pillars a few times per second.
+    val.blend += (val.target - val.blend) * Math.min(1, dt * 3);
+    val.clock += dt;
+    if (val.clock > 0.8 && !reduceMotion) {
+      val.clock = 0;
+      const size = 0.008 + 0.04 * val.blend;   // errors matter more when the surface is flat
+      val.jitter = MENU.map(function () { return size * randn(); });
+    }
+
+    // Slow auto turn, paused for a moment after the reader drags.
+    [orbit1, orbit2].forEach(function (o) {
+      if (o.idle > 0) o.idle -= dt; else if (!reduceMotion) o.theta += dt * 0.12;
+    });
+
+    stages.forEach(function (st) {
+      if (!st.visible) return;
+      if (st.update) st.update(dt);
+
+      // Place the camera on a sphere around the middle of the picture.
+      const o = st.orbit, r = 3.3, ty = 0.45;
+      st.camera.position.set(r * Math.cos(o.phi) * Math.sin(o.theta), ty + r * Math.sin(o.phi), r * Math.cos(o.phi) * Math.cos(o.theta));
+      st.camera.lookAt(0, ty, 0);
+      st.renderer.render(st.scene, st.camera);
+
+      // Pin each HTML label to its 3D point.
+      const w = st.wrap.clientWidth, h = st.wrap.clientHeight;
+      st.labels.forEach(function (L) {
+        tmp.copy(L.pos).project(st.camera);
+        const x = (tmp.x * 0.5 + 0.5) * w, y = (-tmp.y * 0.5 + 0.5) * h;
+        L.el.style.transform = "translate(-50%, -50%) translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px)";
+      });
+    });
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+start();
+</script>
+</body>
+</html>
